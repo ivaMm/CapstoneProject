@@ -1,0 +1,99 @@
+module Main where
+
+import DA.Action
+import DA.Date
+import DA.Exception
+import DA.Set (Set)
+
+
+data Currency = EUR | USD | GBP
+  deriving (Show, Eq)
+
+data Price = Price
+  with
+    amount   : Decimal
+    currency : Currency
+  deriving (Show, Eq)
+
+template CarRepairProposal
+    with
+        customer    : Party
+        provider    : Party
+        description : Text
+        price       : Price
+        observers   : Set Party
+    where 
+        signatory customer
+        observer provider, observers
+        
+        -- customer can propose car repair
+        choice Propose : ContractId CarRepairProposal
+            controller customer
+            do
+              create this
+             
+        -- upon getting rejected, customer can revise the proposal
+        choice Revise : ContractId CarRepairProposal
+            with
+                newPrice        : Price
+                newDescription  : Text 
+            controller customer
+            do
+                create this with
+                    price       = newPrice
+                    description = newDescription
+
+        -- customer can cancel his proposal, which will archive it
+        choice Cancel : ()
+          controller customer
+          do return ()
+
+        -- provider can reject the proposal
+        choice Reject : ContractId CarRepairProposal
+            with
+                feedback : Text
+                newPrice : Price
+            controller provider
+            do
+                create this with 
+                    description = feedback 
+                    price       = newPrice
+        
+        -- provider can accept the proposal, which will archive it and create a new contract CarRepair
+        choice Accept : ContractId CarRepair
+            with
+              paymentDue : Date
+            controller provider
+            do
+              try do
+                createdAt <- getTime
+                let today = toDateUTC createdAt 
+                when (today > paymentDue) $
+                  throw PaymentDueError with
+                    paymentDue
+                    today
+                create CarRepair with ..
+              catch
+                PreconditionFailed _ -> assertFail "Price should be greater than 0.0"
+
+template CarRepair
+    with 
+        customer    : Party
+        provider    : Party
+        description : Text 
+        price       : Price
+        paymentDue  : Date
+        createdAt   : Time
+        observers   : Set Party
+    where
+        signatory provider, customer
+        observer observers
+
+        ensure price.amount > 0.0
+
+exception PaymentDueError
+  with
+    today      : Date
+    paymentDue : Date
+  where
+    message "Payment date " <> show paymentDue <> " cannot be in the past " <> show today

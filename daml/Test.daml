@@ -1,0 +1,110 @@
+module Test where
+
+import Main
+
+import DA.Date     (Month(May), date)
+import DA.Set      (Set, singleton)
+import DA.Time     (time)
+
+import Daml.Script
+
+data TestParties = TestParties 
+  with
+    customer  : Party
+    provider  : Party
+    observers : Set Party
+
+setupParties : Script (TestParties)
+setupParties = script do
+  [customer, provider, employee] <- forA ["Customer", "Provider", "Employee"] (\p -> allocateParty p)
+  return TestParties with observers = singleton employee, ..
+
+testPaymentDue : Script ()
+testPaymentDue = script do
+
+  setTime $ time (date 2023 May 1) 0 0 0
+
+  TestParties{..} <- setupParties
+  
+  customerACR <- submit customer do
+    createCmd CarRepairProposal with
+      description = ""
+      price       = Price with currency = EUR, amount = 100.0
+      ..
+
+  submitMustFail provider do
+    exerciseCmd customerACR Accept with paymentDue = date 2022 May 15 
+  
+  submit provider do
+    exerciseCmd customerACR Accept with paymentDue = date 2023 May 15
+
+  return ()
+
+testPriceAmount : Script ()
+testPriceAmount = script do
+  
+  TestParties{..} <- setupParties
+  
+  customerACR <- submit customer do
+    createCmd CarRepairProposal with
+      description = ""
+      price       = Price with currency = EUR, amount = 0.0
+      ..
+
+  submitMustFail provider do
+    exerciseCmd customerACR Accept with paymentDue = date 2023 May 15 
+  
+  return ()
+
+setup : Script ()
+setup = script do
+
+  TestParties{..} <- setupParties
+
+  customerCRP <- submit customer do
+    createCmd CarRepairProposal with
+      description = ""
+      price       = Price with currency = EUR, amount = 100.0
+      ..
+ 
+  proposedCRP <- submit customer do 
+    exerciseCmd customerCRP Propose
+
+  rejectedCRP <- submit provider do
+    exerciseCmd proposedCRP Reject with feedback = "nope", newPrice = Price with currency = EUR, amount = 200.0
+
+  revisedCRP <- submit customer do
+    exerciseCmd rejectedCRP Revise with newDescription = "nope", newPrice = Price with currency = EUR, amount = 150.0
+  
+  canceledCRP <- submit customer do 
+    exerciseCmd revisedCRP Cancel
+
+  customerCRP <- submit customer do
+    createCmd CarRepairProposal with
+      description = ""
+      price       = Price with currency = EUR, amount = 130.0
+      ..
+
+  submit customer do exerciseCmd customerCRP Archive
+  
+  customerCRP <- submit customer do
+    createCmd CarRepairProposal with
+      description = ""
+      price       = Price with currency = EUR, amount = 130.0
+      ..
+
+  acceptedCRP <- submit provider do
+    exerciseCmd customerCRP Accept with paymentDue = date 2023 May 15
+  
+  submitMulti [customer, provider] [] do exerciseCmd acceptedCRP Archive
+
+  customerCRP <- submit customer do
+    createCmd CarRepairProposal with
+      description = ""
+      price       = Price with currency = EUR, amount = 130.0
+      ..
+
+  acceptedCRP <- submit provider do
+    exerciseCmd customerCRP Accept with paymentDue = date 2023 May 15
+
+  return ()
