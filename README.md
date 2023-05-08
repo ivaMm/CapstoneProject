@@ -1,11 +1,25 @@
 # Capstone Project
 
+This project is built as a part of Daml Fundamentals Certificate exam. It is using a simple car repair example to demonstrate the use of Daml in real life scenarios, and propose / accept design pattern. 
 
-## I. Project description
+## I. Workflows
+I. Customer (car owner) can request car repair specifying a description of problem and desired price, or in Daml terms, the customer is signatory on CarRepairProposal contract. 
+Provider is an observer on a contract and controller of three choices:
+1. Approve - specifying payment due and observers creates CarRepairAgreement contract with both provider and customer as signatories
+2. Reject
+3. MakeAnOffer - specifying payment due, observers, new price and new description creates CarRepairOffer contract
 
-This project ilustrate simple car repair workflow. Customer can propose car repair, cancel it and revise it.
-Provider can reject it, specifying new description and price, or accept it, specifying payment due. 
-If rejected, customer can revise it. Once proposal is accepted, it will be archived and a new contract CarRepair will be created.
+Customer can cancel the proposal.
+
+II. Provider (mechanic) can offer car repair (create CarRepairOffer contract), and customer can respond by exercising choices:
+1. Propose - specifying new price and description creates CarRepairProposal contract
+2. Accept - creates CarRepairAgreement contract
+3. Decline
+
+Provider can withdraw the offer.
+
+All listed choices are consuming, i.e. they archive contracts, proposal and offer respectively.
+To have a final agreement (CarRepairAgreement contract) there are two requirements that have to be fulfilled: price amount should be greater than zero (specified as part of "ensure" predicate), and payment due should be in the future (inside Accept choice itself). 
 
 
 ## II. Project dependencies

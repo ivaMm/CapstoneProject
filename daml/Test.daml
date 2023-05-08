@@ -3,7 +3,7 @@ module Test where
 import Main
 
 import DA.Date     (Month(May), date)
-import DA.Set      (Set, singleton)
+import DA.Set      (singleton)
 import DA.Time     (time)
 
 import Daml.Script
@@ -12,12 +12,12 @@ data TestParties = TestParties
   with
     customer  : Party
     provider  : Party
-    observers : Set Party
+    employee  : Party
 
 setupParties : Script (TestParties)
 setupParties = script do
   [customer, provider, employee] <- forA ["Customer", "Provider", "Employee"] (\p -> allocateParty p)
-  return TestParties with observers = singleton employee, ..
+  return TestParties with ..
 
 testPaymentDue : Script ()
 testPaymentDue = script do
@@ -25,18 +25,35 @@ testPaymentDue = script do
   setTime $ time (date 2023 May 1) 0 0 0
 
   TestParties{..} <- setupParties
-  
-  customerACR <- submit customer do
+
+  -- PROPOSAL --
+  proposalCR <- submit customer do
     createCmd CarRepairProposal with
-      description = ""
+      description = "broken tire"
       price       = Price with currency = EUR, amount = 100.0
       ..
 
   submitMustFail provider do
-    exerciseCmd customerACR Accept with paymentDue = date 2022 May 15 
+    exerciseCmd proposalCR Approve with 
+      paymentDue = date 2022 May 15
+      observers  = singleton employee
   
   submit provider do
-    exerciseCmd customerACR Accept with paymentDue = date 2023 May 15
+    exerciseCmd proposalCR Approve with 
+      paymentDue = date 2023 May 15
+      observers  = singleton employee
+  
+  -- OFFER --
+  offerCR <- submit provider do 
+    createCmd CarRepairOffer with 
+      description = "broken brakes"
+      price       = Price with currency = EUR, amount = 200.0
+      paymentDue  = date 2022 May 15
+      observers   = singleton employee
+      ..
+  
+  submitMustFail customer do
+    exerciseCmd offerCR Accept
 
   return ()
 
@@ -45,14 +62,29 @@ testPriceAmount = script do
   
   TestParties{..} <- setupParties
   
-  customerACR <- submit customer do
+  -- PROPOSAL --
+  proposalCR <- submit customer do
     createCmd CarRepairProposal with
-      description = ""
+      description = "broken tire"
       price       = Price with currency = EUR, amount = 0.0
       ..
 
   submitMustFail provider do
-    exerciseCmd customerACR Accept with paymentDue = date 2023 May 15 
+    exerciseCmd proposalCR Approve with 
+      paymentDue = date 2023 May 15
+      observers  = singleton employee
+  
+  -- OFFER --
+  offerCR <- submit provider do 
+    createCmd CarRepairOffer with 
+      description = "broken brakes"
+      price       = Price with currency = EUR, amount = 0.0
+      paymentDue  = date 2023 May 15
+      observers   = singleton employee
+      ..
+  
+  submitMustFail customer do
+    exerciseCmd offerCR Accept
   
   return ()
 
@@ -60,51 +92,130 @@ setup : Script ()
 setup = script do
 
   TestParties{..} <- setupParties
-
-  customerCRP <- submit customer do
+  
+  -- PROPOSAL --
+  -- customer create proposal
+  proposalCR <- submit customer do
     createCmd CarRepairProposal with
-      description = ""
+      description = "broken tire"
       price       = Price with currency = EUR, amount = 100.0
       ..
- 
-  proposedCRP <- submit customer do 
-    exerciseCmd customerCRP Propose
-
-  rejectedCRP <- submit provider do
-    exerciseCmd proposedCRP Reject with feedback = "nope", newPrice = Price with currency = EUR, amount = 200.0
-
-  revisedCRP <- submit customer do
-    exerciseCmd rejectedCRP Revise with newDescription = "nope", newPrice = Price with currency = EUR, amount = 150.0
   
-  canceledCRP <- submit customer do 
-    exerciseCmd revisedCRP Cancel
-
-  customerCRP <- submit customer do
+  -- customer cancel proposal
+  submit customer do 
+    exerciseCmd proposalCR Cancel
+  
+  proposalCR <- submit customer do
     createCmd CarRepairProposal with
-      description = ""
-      price       = Price with currency = EUR, amount = 130.0
+      description = "broken tire"
+      price       = Price with currency = EUR, amount = 100.0
+      ..
+  
+  -- provider reject proposal
+  submit provider do 
+    exerciseCmd proposalCR Reject
+
+  proposalCR <- submit customer do
+    createCmd CarRepairProposal with
+      description = "broken tire"
+      price       = Price with currency = EUR, amount = 100.0
       ..
 
-  submit customer do exerciseCmd customerCRP Archive
+  -- provider respond with offer
+  offerCR <- submit provider do
+    exerciseCmd proposalCR MakeAnOffer with 
+      observers      = singleton employee
+      paymentDue     = date 2023 May 15
+      newDescription = "broken brakes"
+      newPrice       = Price with currency = EUR, amount = 200.0
   
-  customerCRP <- submit customer do
-    createCmd CarRepairProposal with
-      description = ""
-      price       = Price with currency = EUR, amount = 130.0
-      ..
+  -- customer decline offer
+  submit customer do
+    exerciseCmd offerCR Decline
 
-  acceptedCRP <- submit provider do
-    exerciseCmd customerCRP Accept with paymentDue = date 2023 May 15
+  proposalCR <- submit customer do
+    createCmd CarRepairProposal with
+      description = "broken tire"
+      price       = Price with currency = EUR, amount = 100.0
+      ..
   
-  submitMulti [customer, provider] [] do exerciseCmd acceptedCRP Archive
-
-  customerCRP <- submit customer do
+  -- provider approve proposal
+  agreementCR <- submit provider do
+    exerciseCmd proposalCR Approve with 
+      paymentDue = date 2023 May 15
+      observers = singleton employee
+  
+  proposalCR <- submit customer do
     createCmd CarRepairProposal with
-      description = ""
-      price       = Price with currency = EUR, amount = 130.0
+      description = "broken tire"
+      price       = Price with currency = EUR, amount = 100.0
       ..
+  
+  -- customer archive proposal
+  submit customer do
+    exerciseCmd proposalCR Archive
 
-  acceptedCRP <- submit provider do
-    exerciseCmd customerCRP Accept with paymentDue = date 2023 May 15
+  -- OFFER --
+  -- provider creates offer
+  offerCR <- submit provider do 
+    createCmd CarRepairOffer with 
+      description = "broken brakes"
+      price       = Price with currency = EUR, amount = 100.0
+      paymentDue  = date 2023 May 15
+      observers   = singleton employee
+      ..
+  -- provider withdraw offer
+  submit provider do
+    exerciseCmd offerCR Withdraw
+
+  offerCR <- submit provider do 
+    createCmd CarRepairOffer with 
+      description = "broken brakes"
+      price       = Price with currency = EUR, amount = 100.0
+      paymentDue  = date 2023 May 15
+      observers   = singleton employee
+      ..
+  -- provider archive offer
+  submit provider do
+    exerciseCmd offerCR Archive
+
+  offerCR <- submit provider do 
+    createCmd CarRepairOffer with 
+      description = "broken brakes"
+      price       = Price with currency = EUR, amount = 100.0
+      paymentDue  = date 2023 May 15
+      observers   = singleton employee
+      ..
+  -- customer decline offer
+  submit customer do
+    exerciseCmd offerCR Decline
+  
+  offerCR <- submit provider do 
+    createCmd CarRepairOffer with 
+      description = "broken brakes"
+      price       = Price with currency = EUR, amount = 100.0
+      paymentDue  = date 2023 May 15
+      observers   = singleton employee
+      ..
+  -- customer responds with proposal
+  proposalCR <- submit customer do
+    exerciseCmd offerCR Propose with
+      newDescription = "broken tire"
+      newPrice       = Price with currency = EUR, amount = 50.0
+
+  offerCR <- submit provider do 
+    createCmd CarRepairOffer with 
+      description = "broken brakes"
+      price       = Price with currency = EUR, amount = 100.0
+      paymentDue  = date 2023 May 15
+      observers   = singleton employee
+      ..
+  -- custumer accept offer
+  agreementCR <- submit customer do
+    exerciseCmd offerCR Accept
+  
+  -- archival of agreement
+  submitMulti [customer, provider] [] do 
+    exerciseCmd agreementCR Archive
 
   return ()

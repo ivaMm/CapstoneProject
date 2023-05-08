@@ -7,76 +7,15 @@ import DA.Set (Set)
 
 
 data Currency = EUR | USD | GBP
-  deriving (Show, Eq)
+    deriving (Show, Eq)
 
 data Price = Price
-  with
-    amount   : Decimal
-    currency : Currency
-  deriving (Show, Eq)
-
-template CarRepairProposal
     with
-        customer    : Party
-        provider    : Party
-        description : Text
-        price       : Price
-        observers   : Set Party
-    where 
-        signatory customer
-        observer provider, observers
-        
-        -- customer can propose car repair
-        choice Propose : ContractId CarRepairProposal
-            controller customer
-            do
-              create this
-             
-        -- upon getting rejected, customer can revise the proposal
-        choice Revise : ContractId CarRepairProposal
-            with
-                newPrice        : Price
-                newDescription  : Text 
-            controller customer
-            do
-                create this with
-                    price       = newPrice
-                    description = newDescription
+      amount   : Decimal
+      currency : Currency
+    deriving (Show, Eq)
 
-        -- customer can cancel his proposal, which will archive it
-        choice Cancel : ()
-          controller customer
-          do return ()
-
-        -- provider can reject the proposal
-        choice Reject : ContractId CarRepairProposal
-            with
-                feedback : Text
-                newPrice : Price
-            controller provider
-            do
-                create this with 
-                    description = feedback 
-                    price       = newPrice
-        
-        -- provider can accept the proposal, which will archive it and create a new contract CarRepair
-        choice Accept : ContractId CarRepair
-            with
-              paymentDue : Date
-            controller provider
-            do
-              try do
-                createdAt <- getTime
-                let today = toDateUTC createdAt 
-                when (today > paymentDue) $
-                  throw PaymentDueError with
-                    paymentDue
-                    today
-                create CarRepair with ..
-              catch
-                PreconditionFailed _ -> assertFail "Price should be greater than 0.0"
-
-template CarRepair
+template CarRepairAgreement
     with 
         customer    : Party
         provider    : Party
@@ -91,9 +30,105 @@ template CarRepair
 
         ensure price.amount > 0.0
 
+template CarRepairProposal
+    with
+        customer    : Party
+        provider    : Party
+        description : Text
+        price       : Price
+    where 
+        signatory customer
+        observer provider
+
+        -- provider can and make an offer, which archives proposal and creates CarRepairOffer contract
+        choice MakeAnOffer : ContractId CarRepairOffer
+            with
+                paymentDue     : Date
+                newDescription : Text
+                newPrice       : Price
+                observers      : Set Party
+            controller provider
+            do
+              create CarRepairOffer with description = newDescription, price = newPrice, ..
+           
+        -- provider can accept the proposal, which archives proposal and creates CarRepairAgreement contract
+        choice Approve : ContractId CarRepairAgreement
+            with
+                paymentDue : Date
+                observers  : Set Party
+            controller provider
+            do
+              try do
+                createdAt <- getTime
+                let today = toDateUTC createdAt 
+                when (today > paymentDue) $
+                  throw PaymentDueError with
+                    paymentDue
+                    today
+                create CarRepairAgreement with ..
+              catch
+                PreconditionFailed _ -> assertFail "Price should be greater than 0.0"
+
+        -- customer can cancel proposal, which archives it
+        choice Cancel : ()
+            controller customer
+            do return ()
+        
+        -- provider can reject proposal, which archives it
+        choice Reject : ()
+            controller provider
+            do return ()
+
+template CarRepairOffer
+    with
+        customer    : Party
+        provider    : Party
+        description : Text
+        price       : Price
+        paymentDue  : Date
+        observers   : Set Party
+    where 
+        signatory provider
+        observer customer, observers
+        
+        -- customer can make proposal, which archives offer and creates CarRepairProposal contract
+        choice Propose : ContractId CarRepairProposal
+            with
+                newDescription : Text
+                newPrice       : Price
+            controller customer
+            do
+              create CarRepairProposal with description = newDescription, price = newPrice, ..
+        
+        -- customer can accept offer, which archives offer and creates agreement
+        choice Accept : ContractId CarRepairAgreement
+            controller customer
+            do
+             try do
+                createdAt <- getTime
+                let today = toDateUTC createdAt 
+                when (today > paymentDue) $
+                  throw PaymentDueError with
+                    paymentDue
+                    today
+                create CarRepairAgreement with ..
+              catch
+                PreconditionFailed _ -> assertFail "Price should be greater than 0.0"
+        
+        -- customer can decline offer, which archives it
+        choice Decline : ()
+            controller customer
+            do return ()
+        
+        -- provider can withdraw offer, which archives it
+        choice Withdraw : ()
+            controller provider
+            do return ()
+
+
 exception PaymentDueError
-  with
-    today      : Date
-    paymentDue : Date
-  where
-    message "Payment date " <> show paymentDue <> " cannot be in the past " <> show today
+    with
+        today      : Date
+        paymentDue : Date
+    where
+        message "Payment date " <> show paymentDue <> " cannot be in the past " <> show today
